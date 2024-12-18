@@ -61,8 +61,8 @@ Delivery_STD = 2.6    # New global - STD from RER = 2.94
 Delivery_max = 14
 Delivery_min = 1
 
-# Group effect for testing
-Group_extras_Pct = 0.15 # how much less (more) one group will deliver than the other
+# Group effect for testing - WHAT TO CHANGE!!!!!! 'Group_extras_Pct' to change the hypothesized difference between the 2 groups
+Group_extras_Pct = 0.2 # how much less (more) one group will deliver than the other
 if(False):
     Group_extras = [-1,1]  # Values of extra weight for each group absolute value each time - not used b/c need variation in each trip
 else:
