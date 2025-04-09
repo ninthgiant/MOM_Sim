@@ -5,6 +5,9 @@
 #       test if we can detect differences between groups that deliver differnt loads given the error inherent in the MOMs
 #       change from 04 - save bird ID, then average over bird ID or put into GLM with BirdID as a Random effect
 #       many other changes since then, too
+#       UPDATE: April 2, 2024
+#           add do_Sim_Multi - Allows iterations through a range of #birds in groups and pct difference between groups
+#           could clean this up, but not necessary now
 ###########
 
 import pandas as pd
@@ -15,6 +18,8 @@ import statsmodels.api as sm
 import statsmodels.formula.api as smf
 import os
 import sys
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D  # Registers the 3D projection
 
 
 global N_Birds_in_Group, N_Groups, body_mean, body_STD, Trip_per_bird
@@ -26,7 +31,7 @@ global alpha
 # Define the global variables
 
 # number of simulations
-N_Sims = 1000
+N_Sims = 1000  # Make this 100 for testing
 
 # significance level
 alpha = 0.05
@@ -42,7 +47,7 @@ body_min = 40
 body_max = 55
 
 # foraging parameters
-Trip_per_bird = 8  # was 9 days; have day 10 to 50 = 40 days, trip every 5 days = 8
+Trip_per_bird = 8 # was 9 days; have day 10 to 50 = 40 days, trip every 5 days = 8, every 4 days = 10
 load_mean = 15 # 15 gives RER results: was 15, why?, tried 12 and 10 and not much diff in final result, even down to 7.67 + 1 gram for self = 8.67, p = 0.04
 load_STD = 1
 load_min = 4
@@ -274,7 +279,7 @@ def do_Stats(chick_feeds_df):
 #########################
 # Main function to simulate the MOM process
 #########################
-def MOM_simulation():
+def MOM_simulation(N_Birds, Pct_Extra):
     
     bird_dfs = []
     chick_feeds_data = []
@@ -282,7 +287,7 @@ def MOM_simulation():
     # Generate a DataFrame for each group
     for group in range(1, N_Groups + 1):
         group_name = f'Group_{group}'
-        bird_df = build_bird_list(N_Birds_in_Group, group_name, body_mean, body_STD, body_min, body_max, 2.0, 1)
+        bird_df = build_bird_list(N_Birds, group_name, body_mean, body_STD, body_min, body_max, 2.0, 1)
         bird_dfs.append(bird_df)
         
         # Iterate through each bird in the DataFrame
@@ -309,7 +314,7 @@ def MOM_simulation():
                 Del_size = get_random_from_distribution(Delivery_mean, Delivery_STD, (load_size - 1), Delivery_min)
                 # print(f"Delivery - returned: {Del_size}")
                 # Adjust Delivery Size for the group percentage 
-                Del_size = adjust_delivery(load_size, Del_size, Group_extras_Pct, bird['group_index'])
+                Del_size = adjust_delivery(load_size, Del_size, Pct_Extra, bird['group_index'])
                 # print(f"Delivery - Adjusted: {Del_size}")
 
                 # MOM_del_err = get_random_from_distribution(Err_mean, Err_STD, Err_max, Err_min)
@@ -365,57 +370,183 @@ def MOM_simulation():
     
     return myReturn
 
+#########################
+# Function to perform a single iterative simulation
+##########################
+def do_Sim():
+    print(f"Running: {N_Sims} iterations at alpha {alpha} for {N_Birds_in_Group} birds/group with {Trip_per_bird} trip/bird with difference of {Group_extras_Pct} - Be patient!")
 
-###############
-# Run the iterative simulation
-##
-#### show the user what we are doing while she waits...
-print(f"Running: {N_Sims} iterations at alpha {alpha} for {N_Birds_in_Group} birds/group with {Trip_per_bird} trip/bird with difference of {Group_extras_Pct} - Be patient!")
+    results_data = []   # somewhere to hold all the results for exporting or reporting at the end
 
-results_data = []   # somewhere to hold all the results for exporting or reporting at the end
+    # Populate the list with n_birds
+    for i in range(N_Sims):
+        iteration = i
+        if(False):      # old way that only returned a single p-value. no longer used
+            my_Results_df = round(MOM_simulation(),2)
+            results_data.append({'Group Extras': Group_extras, 'P': p_value})
+        else:
+            # sim_results = MOM_simulation()
+            sim_results = MOM_simulation(N_Birds_in_Group, Group_extras_Pct)
+            results_data.append({
+                'P': sim_results[0],
+                'mean_MOM_ERROR': sim_results[1],
+                'std_MOM_ERROR': sim_results[2],
+                'min_MOM_ERROR': sim_results[3],
+                'max_MOM_ERROR': sim_results[4],
+                'mean_Del_Size': sim_results[5],
+                'std_Del_Size': sim_results[6],
+                'MOM_Arr_err': sim_results[7],
+                'MOM_del_err': sim_results[8],
+                'mean_group1': sim_results[9],      ### these hold mean ± SE for treatment groups
+                'std_error_group1': sim_results[10],
+                'mean_group2': sim_results[11],
+                'std_error_group2': sim_results[12],
+                'RndEff_Mod_P': sim_results[13]
+        })
 
-# Populate the list with n_birds
-for i in range(N_Sims):
-    iteration = i
-    if(False):      # old way that only returned a single p-value. no longer used
-        my_Results_df = round(MOM_simulation(),2)
-        results_data.append({'Group Extras': Group_extras, 'P': p_value})
+    print(f"Results for group difference for {N_Birds_in_Group} birds/group with {Trip_per_bird} trips/bird with difference of {Group_extras_Pct*100}%")
+
+    # Count the number of 'P' values <= 0.05
+    results_df = pd.DataFrame(results_data)
+    count_p_le_0_05 = (results_df['P'] <= alpha).sum()
+    print(f"Number iterations below {alpha}: {count_p_le_0_05} out of: {len(results_df['P'])} -- P = {round(1-count_p_le_0_05/len(results_df['P']),2)}")
+
+    # count_RE_0_05 = (results_df['RndEff_Mod_P'] <= alpha).sum()
+    # print(f"Number iterations below {alpha}: {count_RE_0_05} out of: {len(results_df['P'])} -- P = {round(1-count_p_le_0_05/len(results_df['P']),2)}")
+
+    # print the summary results - mean value for each of them across all iterations
+    print("Means:")
+    print(results_df.mean().round(2))
+
+    return count_p_le_0_05
+
+#########################
+# Function to perform a multiple iterative simulations
+##########################
+# import numpy as np
+# import pandas as pd
+import numpy as np
+import pandas as pd
+
+def do_Sim_Multi(BirdsMin, BirdsMax, pct_range, incrBird):
+    """
+    Run MOM_simulation across a range of group sizes and percent differences.
+    
+    Parameters:
+      BirdsMin (int): Minimum number of birds per group.
+      BirdsMax (int): Maximum number of birds per group.
+      pct_range (list or array): Either a list of specific percent values to use,
+                                 or a list with three elements [PctMin, PctMax, incrPct].
+      incrBird (int): Increment for the birds loop.
+    
+    Returns:
+      results_df (DataFrame): A DataFrame containing the simulation results.
+    """
+    results_summary = []  # container for the multi-level data
+
+    # Determine the percent values to use based on pct_range.
+    if isinstance(pct_range, (list, tuple, np.ndarray)):
+        pct_range = list(pct_range)  # Ensure it's a list.
+        if len(pct_range) == 3:
+            PctMin, PctMax, incrPct = pct_range
+            pct_values = np.arange(PctMin, PctMax + incrPct, incrPct)
+        else:
+            # Assume the provided list/array is the explicit set of percent values.
+            pct_values = np.array(pct_range)
     else:
-        sim_results = MOM_simulation()
-        results_data.append({
-            'P': sim_results[0],
-            'mean_MOM_ERROR': sim_results[1],
-            'std_MOM_ERROR': sim_results[2],
-            'min_MOM_ERROR': sim_results[3],
-            'max_MOM_ERROR': sim_results[4],
-            'mean_Del_Size': sim_results[5],
-            'std_Del_Size': sim_results[6],
-            'MOM_Arr_err': sim_results[7],
-            'MOM_del_err': sim_results[8],
-            'mean_group1': sim_results[9],      ### these hold mean ± SE for treatment groups
-            'std_error_group1': sim_results[10],
-            'mean_group2': sim_results[11],
-            'std_error_group2': sim_results[12],
-            'RndEff_Mod_P': sim_results[13]
-    })
+        raise ValueError("pct_range must be a list, tuple, or numpy array.")
+    
+    print(f"Running simulations for birds/group from {BirdsMin} to {BirdsMax} (step {incrBird}) and "
+          f"group extras percent from {pct_values[0]*100}% to {pct_values[-1]*100}% using provided steps.")
+    
+    
 
-# print("results_df:")
-# print(results_df)
+    for birds in range(BirdsMin, BirdsMax + 1, incrBird):
+        for pct in pct_values:
+            print(f"Running {N_Sims} iterations for {birds} birds/group with {Trip_per_bird} trips/bird "
+                  f"and group extras percent {pct*100}% ...")
+            results_data = []   # Container for simulation results for just this run
+            for i in range(N_Sims):
+                # Run the simulation for the current birds and percent values.
+                sim_results = MOM_simulation(birds, pct)
+                results_data.append({
+                    'N_Birds_in_Group': birds,
+                    'Group_extras_Pct': pct,
+                    'P': sim_results[0],
+                    'mean_MOM_ERROR': sim_results[1],
+                    'std_MOM_ERROR': sim_results[2],
+                    'min_MOM_ERROR': sim_results[3],
+                    'max_MOM_ERROR': sim_results[4],
+                    'mean_Del_Size': sim_results[5],
+                    'std_Del_Size': sim_results[6],
+                    'MOM_Arr_err': sim_results[7],
+                    'MOM_del_err': sim_results[8],
+                    'mean_group1': sim_results[9],
+                    'std_error_group1': sim_results[10],
+                    'mean_group2': sim_results[11],
+                    'std_error_group2': sim_results[12],
+                    'RndEff_Mod_P': sim_results[13]
+                })
+            print(f"Completed simulations for {birds} birds/group at {pct*100}% extras.")
+            results_df = pd.DataFrame(results_data)
+            count_p_le_alpha = (results_df['P'] <= alpha).sum()
+            total_runs = len(results_df['P'])
+            results_summary.append({
+                'N_Birds_in_Group': birds,
+                'Group_extras_Pct': pct,
+                'P': round(1 - count_p_le_alpha/total_runs, 3),
+                'Runs': total_runs,
+                'N_less_alpha': count_p_le_alpha,
+                'RndEff_Mod_P': sim_results[13]
+                
+            })
 
-print(f"Results for group difference for {N_Birds_in_Group} birds/group with {Trip_per_bird} trips/bird with difference of {Group_extras_Pct*100}%")
+    
+    # results_df = pd.DataFrame(results_data)
+    results_summary_df = pd.DataFrame(results_summary)
+    
+    return results_summary_df
 
-# Count the number of 'P' values <= 0.05
-results_df = pd.DataFrame(results_data)
-count_p_le_0_05 = (results_df['P'] <= alpha).sum()
-print(f"Number iterations below {alpha}: {count_p_le_0_05} out of: {len(results_df['P'])} -- P = {round(1-count_p_le_0_05/len(results_df['P']),2)}")
+#########################
+# Function to print results from simulation into a 3D scatterplot
+#
+# Create a 3D scatter plot from the simulation results.
+# Parameters:
+#   results_df (DataFrame): DataFrame returned by do_Sim_Multi(), where each row contains the results
+#   for one simulation iteration, including 'N_Birds_in_Group', 'Group_extras_Pct', and 'P'.
+##########################
+def plot_3d_results(results_df):
 
-count_RE_0_05 = (results_df['RndEff_Mod_P'] <= alpha).sum()
-# print(f"Number iterations below {alpha}: {count_RE_0_05} out of: {len(results_df['P'])} -- P = {round(1-count_p_le_0_05/len(results_df['P']),2)}")
+    fig = plt.figure(figsize=(10, 7))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Scatter plot: X-axis is the number of birds, Y-axis is the group extras percent, Z-axis is the P value.
+    ax.scatter(results_df['N_Birds_in_Group'], results_df['Group_extras_Pct'], results_df['P'], marker='o')
+    
+    # Label the axes and add a title.
+    ax.set_xlabel('Birds each in Group')
+    ax.set_ylabel('Hypothesized Difference')
 
-# print the summary results - mean value for each of them across all iterations
-print("Means:")
-print(results_df.mean().round(2))
+    ax.set_zlabel('Probability of Detection')
+    ax.set_title('3D Scatter Plot of Simulation Results')
+    
+    # Display the plot.
+    plt.show()
 
+
+## setup the set of hypothesized differences you want to test
+myPct = [0.1, 0.15, 0.2, 0.25]
+# myPct = [0.2]
+
+# results_df = do_Sim(BirdsMin=10, BirdsMax=20, PctMin=0.1, PctMax=0.25)
+results_df = do_Sim_Multi(BirdsMin=10, BirdsMax=30, pct_range=myPct, incrBird=1)
+
+plot_3d_results(results_df)
+
+myfilename = "results_v01"
+
+# save_results_as_csv(results_df)
+results_df.to_csv(myfilename, index=False)
 
 
 
